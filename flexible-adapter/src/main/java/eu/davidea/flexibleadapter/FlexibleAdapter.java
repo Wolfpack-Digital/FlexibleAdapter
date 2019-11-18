@@ -2043,6 +2043,10 @@ public class FlexibleAdapter<T extends IFlexible>
         return setEndlessProgressItem(progressItem);
     }
 
+    public int getEndlessScrollThreshold() {
+        return mEndlessScrollThreshold;
+    }
+
     /**
      * Sets the minimum number of items still to bind to start the automatic loading.
      * <p>Default value is 1.</p>

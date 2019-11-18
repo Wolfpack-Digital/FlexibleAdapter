@@ -29,3 +29,6 @@ proguard/
 tools/
 .DS_Store
 *.iml
+
+gradlew
+gradlew.bat

@@ -46,6 +46,7 @@ import androidx.core.view.ViewCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.StaggeredGridLayoutManager;
+
 import eu.davidea.flexibleadapter.R;
 import eu.davidea.flexibleadapter.utils.Log;
 
@@ -367,7 +368,7 @@ public class FastScroller extends FrameLayout {
 
             if (layoutManager instanceof StaggeredGridLayoutManager) {
                 ((StaggeredGridLayoutManager) layoutManager).scrollToPositionWithOffset(targetPos, 0);
-            } else {
+            } else if (layoutManager instanceof LinearLayoutManager) {
                 ((LinearLayoutManager) layoutManager).scrollToPositionWithOffset(targetPos, 0);
             }
 

@@ -192,8 +192,10 @@ public class FlexibleLayoutManager implements IFlexibleLayoutManager {
                 }
             }
             return position;
-        } else {
+        } else if (layoutManager instanceof LinearLayoutManager) {
             return ((LinearLayoutManager) layoutManager).findLastVisibleItemPosition();
+        } else {
+            return layoutManager.getChildCount() - 1;
         }
     }
 

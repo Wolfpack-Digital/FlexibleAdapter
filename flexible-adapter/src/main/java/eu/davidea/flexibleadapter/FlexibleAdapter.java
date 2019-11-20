@@ -36,6 +36,9 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.RecyclerView;
+
+import eu.davidea.flexibleadapter.helpers.EndlessScrollState;
+import eu.davidea.flexibleadapter.helpers.EndlessScrollStateInterface;
 import eu.davidea.flexibleadapter.helpers.ItemTouchHelperCallback;
 import eu.davidea.flexibleadapter.helpers.StickyHeaderHelper;
 import eu.davidea.flexibleadapter.items.IExpandable;
@@ -43,6 +46,7 @@ import eu.davidea.flexibleadapter.items.IFilterable;
 import eu.davidea.flexibleadapter.items.IFlexible;
 import eu.davidea.flexibleadapter.items.IHeader;
 import eu.davidea.flexibleadapter.items.ISectionable;
+import eu.davidea.flexibleadapter.utils.Log;
 import eu.davidea.viewholders.ExpandableViewHolder;
 import eu.davidea.viewholders.FlexibleViewHolder;
 
@@ -90,6 +94,8 @@ import static eu.davidea.flexibleadapter.utils.LayoutUtils.getClassName;
 public class FlexibleAdapter<T extends IFlexible>
         extends AnimatorAdapter
         implements ItemTouchHelperCallback.AdapterCallback {
+    public static final int DIRECTION_TOP = 1;
+    public static final int DIRECTION_DOWN = 0;
 
     private static final String TAG = FlexibleAdapter.class.getSimpleName();
     private static final String EXTRA_PARENT = TAG + "_parentSelected";
@@ -158,7 +164,11 @@ public class FlexibleAdapter<T extends IFlexible>
     /* EndlessScroll */
     private int mEndlessScrollThreshold = 1, mEndlessTargetCount = 0, mEndlessPageSize = 0;
     private boolean endlessLoading = false, endlessScrollEnabled = false, mTopEndless = false;
+    private EndlessScrollStateInterface mEndlessScrollState;
     private T mProgressItem;
+
+    private int mTopPageCount = 0;
+    private int mDownPageCount = 0;
 
     /* Listeners */
     public OnItemClickListener mItemClickListener;
@@ -231,6 +241,11 @@ public class FlexibleAdapter<T extends IFlexible>
      * <br>5.0.0-rc2 Copy of the Original List is done internally
      */
     public FlexibleAdapter(@Nullable List<T> items, @Nullable Object listeners, boolean stableIds) {
+        this(items, listeners, stableIds, 0, 0);
+    }
+
+
+    public FlexibleAdapter(@Nullable List<T> items, @Nullable Object listeners, boolean stableIds, int topPageCount, int downPageCount) {
         super(stableIds);
         // Copy of the original list
         if (items == null) {
@@ -238,11 +253,14 @@ public class FlexibleAdapter<T extends IFlexible>
         } else {
             mItems = new ArrayList<>(items);
         }
+        mTopPageCount = topPageCount;
+        mDownPageCount = downPageCount;
         // Initialize internal lists
         mScrollableHeaders = new ArrayList<>();
         mScrollableFooters = new ArrayList<>();
         mRestoreList = new ArrayList<>();
         mUndoPositions = new ArrayList<>();
+        mEndlessScrollState = new EndlessScrollState();
 
         // Create listeners instances
         if (listeners != null) {
@@ -251,6 +269,24 @@ public class FlexibleAdapter<T extends IFlexible>
 
         // Get notified when items are inserted or removed (it adjusts selected positions)
         registerAdapterDataObserver(new AdapterDataObserver());
+    }
+
+
+
+    public int getTopPageCount() {
+        return mTopPageCount;
+    }
+
+    public void setTopPageCount(int mTopPageCount) {
+        this.mTopPageCount = mTopPageCount;
+    }
+
+    public int getDownPageCount() {
+        return mDownPageCount;
+    }
+
+    public void setDownPageCount(int mDownPageCount) {
+        this.mDownPageCount = mDownPageCount;
     }
 
     /**
@@ -1896,7 +1932,7 @@ public class FlexibleAdapter<T extends IFlexible>
      * @since 5.0.0-rc1
      */
     public boolean isEndlessScrollEnabled() {
-        return endlessScrollEnabled;
+        return mEndlessScrollState.isEnabled();
     }
 
     /**
@@ -1909,10 +1945,14 @@ public class FlexibleAdapter<T extends IFlexible>
      * @since 5.0.0-rc1
      */
     public int getEndlessCurrentPage() {
-        if (mEndlessPageSize > 0) {
-            return (int) Math.ceil((double) getMainItemCount() / mEndlessPageSize);
+        return Math.max(1, mEndlessPageSize > 0 ? getMainItemCount() / mEndlessPageSize : 0);
+    }
+
+    private int getEndlessCurrentPage(int direction) {
+        if (direction == DIRECTION_TOP) {
+            return mTopPageCount++;
         }
-        return 0;
+        return mDownPageCount++;
     }
 
     /**
@@ -1998,6 +2038,11 @@ public class FlexibleAdapter<T extends IFlexible>
         return this;
     }
 
+    public FlexibleAdapter setBidirectional() {
+        mEndlessScrollState.setBidirectional(true);
+        return this;
+    }
+
     /**
      * Sets the progressItem to be displayed at the end of the list and activate the Loading More
      * feature.
@@ -2012,14 +2057,33 @@ public class FlexibleAdapter<T extends IFlexible>
      * @since 5.0.0-b8
      */
     public FlexibleAdapter<T> setEndlessProgressItem(@Nullable T progressItem) {
-        endlessScrollEnabled = progressItem != null;
+        if (progressItem == null) {
+            mEndlessScrollState.disable();
+        }
+
         if (progressItem != null) {
             setEndlessScrollThreshold(mEndlessScrollThreshold);
             mProgressItem = progressItem;
-            log.i("Set progressItem=%s", getClassName(progressItem));
-            log.i("Enabled EndlessScrolling");
+            Log.i("Set progressItem=%s", getClassName(progressItem));
+            Log.i("Enabled EndlessScrolling");
         } else {
-            log.i("Disabled EndlessScrolling");
+            Log.i("Disabled EndlessScrolling");
+        }
+        return this;
+    }
+
+    public FlexibleAdapter<T> setEndlessProgressItem(@Nullable T progressItem, int direction) {
+        if (progressItem == null) {
+            mEndlessScrollState.disableDirection(direction);
+        }
+
+        if (progressItem != null) {
+            setEndlessScrollThreshold(mEndlessScrollThreshold);
+            mProgressItem = progressItem;
+            Log.i("Set progressItem=%s", getClassName(progressItem));
+            Log.i("Enabled EndlessScrolling");
+        } else {
+            Log.i("Disabled EndlessScrolling");
         }
         return this;
     }
@@ -2075,34 +2139,41 @@ public class FlexibleAdapter<T extends IFlexible>
      */
     protected void onLoadMore(int position) {
         // Skip everything when loading more is unused OR currently loading
-        if (!isEndlessScrollEnabled() || endlessLoading || getItem(position) == mProgressItem) {
+        if (!isEndlessScrollEnabled() || (!mEndlessScrollState.isBidirectional() && mEndlessScrollState.isLoading()) || getItem(position) == mProgressItem)
+            return;
+
+        // Check next loading threshold
+        int topThreshold = mEndlessScrollThreshold - (hasFilter() ? 0 : mScrollableHeaders.size());
+        int bottomThreshold = getItemCount() - mEndlessScrollThreshold - (hasFilter() ? 0 : mScrollableFooters.size());
+
+        final boolean isBottomThresholdReached;
+
+        if ((isBottomThresholdReached = (position > 0 && position > topThreshold)) &&
+                (position == getGlobalPositionOf(mProgressItem) || position < bottomThreshold)) {
             return;
         }
 
-        // Check next loading threshold
-        int threshold = mTopEndless ?
-                mEndlessScrollThreshold - (hasFilter() ? 0 : mScrollableHeaders.size())
-                : getItemCount() - mEndlessScrollThreshold - (hasFilter() ? 0 : mScrollableFooters.size());
-        if ((!mTopEndless && (position == getGlobalPositionOf(mProgressItem) || position < threshold)) ||
-                (mTopEndless && position > 0 && position > threshold)) {
+        final int loadingDirection = isBottomThresholdReached ? DIRECTION_DOWN : DIRECTION_TOP;
+
+        // Stop the loading if the direction we are currently loading on is either disabled or it is currently loading
+        if ((isBottomThresholdReached && (!mEndlessScrollState.isBottomEnabled() || mEndlessScrollState.isLoading(loadingDirection))) ||
+                (!isBottomThresholdReached && (!mEndlessScrollState.isTopEnabled() || mEndlessScrollState.isLoading(loadingDirection))))
             return;
-        } else {
-            log.v("onLoadMore     topEndless=%s, loading=%s, position=%s, itemCount=%s threshold=%s, currentThreshold=%s",
-                    mTopEndless, endlessLoading, position, getItemCount(), mEndlessScrollThreshold, threshold);
-        }
+
+        android.util.Log.d(TAG, "onLoadMore: " + (isBottomThresholdReached ? "bottom threshold" : "top threshold"));
+
         // Load more if not loading and inside the threshold
-        endlessLoading = true;
+        mEndlessScrollState.setLoading(true, loadingDirection);
         // Insertion is in post, as suggested by Android because: java.lang.IllegalStateException:
         // Cannot call notifyItemInserted while RecyclerView is computing a layout or scrolling
         mHandler.post(new Runnable() {
             @Override
             public void run() {
-                // Show progressItem if not already shown
-                showProgressItem();
+                // Clear previous delayed message
+                mHandler.removeMessages(LOAD_MORE_COMPLETE);
                 // When the listener is not set, loading more is called upon a user request
                 if (mEndlessScrollListener != null) {
-                    log.d("onLoadMore     invoked!");
-                    mEndlessScrollListener.onLoadMore(getMainItemCount(), getEndlessCurrentPage());
+                    mEndlessScrollListener.onLoadMore(getMainItemCount(), getEndlessCurrentPage(loadingDirection), loadingDirection);
                 }
             }
         });
@@ -2141,7 +2212,7 @@ public class FlexibleAdapter<T extends IFlexible>
      */
     public void onLoadMoreComplete(@Nullable List<T> newItems, @IntRange(from = -1) long delay) {
         // Reset the loading status
-        endlessLoading = false;
+        mEndlessScrollState.setLoading(false);
         // Calculate new items count
         int newItemsSize = newItems == null ? 0 : newItems.size();
         int totalItemCount = newItemsSize + getMainItemCount();
@@ -2170,6 +2241,36 @@ public class FlexibleAdapter<T extends IFlexible>
         if (newItemsSize == 0 || !isEndlessScrollEnabled()) {
             noMoreLoad(newItemsSize);
         }
+    }
+
+    public void onLoadMoreComplete(@Nullable List<T> newItems, @IntRange(from = 0) int loadedItemsSize, @IntRange(from = -1) long delay, int loadingDirection) {
+        // Calculate new items count
+        int newItemsSize = loadedItemsSize == 0 ? (newItems == null ? 0 : newItems.size()) : loadedItemsSize;
+        int totalItemCount = newItemsSize + getMainItemCount();
+
+        // Remove the progressItem if needed
+        if (delay > 0 && (newItemsSize == 0 || !isEndlessScrollEnabled())) {
+            Log.v("onLoadMore     enqueued removing progressItem (%sms)", delay);
+            mHandler.sendEmptyMessageDelayed(LOAD_MORE_COMPLETE, delay);
+        } else {
+            hideProgressItem(loadingDirection);
+        }
+
+        // Add any new items
+        if (newItemsSize > 0) {
+            Log.v("onLoadMore     performing adding %s new items on page=%s", newItemsSize, getEndlessCurrentPage());
+            int position = loadingDirection == DIRECTION_TOP ? 0 : getGlobalPositionOf(mProgressItem);
+            addItems(position, newItems);
+        }
+        // Check if features are enabled and the limits have been reached
+        if (mEndlessPageSize > 0 && newItemsSize < mEndlessPageSize || // Is feature enabled and Not enough items?
+                mEndlessTargetCount > 0 && totalItemCount >= mEndlessTargetCount) { // Is feature enabled and Max limit has been reached?
+            noMoreLoad(newItemsSize, loadingDirection);
+            // Disable the EndlessScroll feature
+            setEndlessProgressItem(null, loadingDirection);
+        }
+        // Reset the loading status
+        mEndlessScrollState.setLoading(false, loadingDirection);
     }
 
     /**
@@ -2201,6 +2302,18 @@ public class FlexibleAdapter<T extends IFlexible>
         }
     }
 
+    private void hideProgressItem(int loadingDirection) {
+        int positionToNotify = getGlobalPositionOf(mProgressItem);
+        if (positionToNotify >= 0) {
+            Log.v("onLoadMore     remove progressItem");
+            if (loadingDirection == DIRECTION_TOP) {
+                removeScrollableHeader(mProgressItem);
+            } else {
+                removeScrollableFooter(mProgressItem);
+            }
+        }
+    }
+
     /**
      * Called when no more items are loaded.
      */
@@ -2212,6 +2325,16 @@ public class FlexibleAdapter<T extends IFlexible>
         }
         if (mEndlessScrollListener != null) {
             mEndlessScrollListener.noMoreLoad(newItemsSize);
+        }
+    }
+
+    private void noMoreLoad(int newItemsSize, int loadingDirection) {
+        Log.i("noMoreLoad! Direction: " + loadingDirection);
+        int positionToNotify = getGlobalPositionOf(mProgressItem);
+        if (positionToNotify >= 0)
+            notifyItemChanged(positionToNotify, Payload.NO_MORE_LOAD);
+        if (mEndlessScrollListener != null) {
+            mEndlessScrollListener.noMoreLoad(newItemsSize, loadingDirection);
         }
     }
 
@@ -3299,6 +3422,11 @@ public class FlexibleAdapter<T extends IFlexible>
         removeAllScrollableHeaders();
         removeAllScrollableFooters();
         removeRange(0, getItemCount(), null);
+    }
+
+    public FlexibleAdapter setEndlessScrollState(boolean enabled) {
+        mEndlessScrollState.setEnabled(enabled);
+        return this;
     }
 
     /**
@@ -4694,7 +4822,7 @@ public class FlexibleAdapter<T extends IFlexible>
      * handle.
      * <p>Default value is {@code false}.</p>
      * To use, it is sufficient to set the HandleView by calling
-     * {@link FlexibleViewHolder#setDragHandleView(View)}.
+     * .
      *
      * @return true if active, false otherwise
      * @see #setHandleDragEnabled(boolean)
@@ -5440,6 +5568,9 @@ public class FlexibleAdapter<T extends IFlexible>
          */
         void noMoreLoad(int newItemsSize);
 
+
+        void noMoreLoad(int newItemsSize, int loadingDirection);
+
         /**
          * Loads more data.
          * <p>Use {@code lastPosition} and {@code currentPage} to know what to load next.</p>
@@ -5450,7 +5581,7 @@ public class FlexibleAdapter<T extends IFlexible>
          * @since 5.0.0-b6
          * <br>5.0.0-rc1 added {@code lastPosition} and {@code currentPage} as parameters
          */
-        void onLoadMore(int lastPosition, int currentPage);
+        void onLoadMore(int lastPosition, int currentPage, int loadingDirection);
     }
 
     /**
@@ -5599,7 +5730,7 @@ public class FlexibleAdapter<T extends IFlexible>
 
         @Override
         protected void onPreExecute() {
-            if (endlessLoading) {
+            if (mEndlessScrollState.isLoading()) {
                 log.w("Cannot filter while endlessLoading");
                 this.cancel(true);
             }
@@ -5726,6 +5857,11 @@ public class FlexibleAdapter<T extends IFlexible>
         if (mFilterListener != null) {
             mFilterListener.onUpdateFilterView(getMainItemCount());
         }
+    }
+
+    public void resetPageCounts() {
+        mTopPageCount = 0;
+        mDownPageCount = 0;
     }
 
     /**
